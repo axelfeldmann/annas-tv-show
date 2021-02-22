@@ -9,6 +9,8 @@
 #include <map>
 #include <queue>
 #include <sstream>
+#include <thread>
+#include <future>
 
 using std::vector;
 using std::pair;
@@ -16,6 +18,9 @@ using std::set;
 using std::map;
 using std::priority_queue;
 using std::string;
+
+std::random_device r;
+std::default_random_engine e(r());
 
 using Matching = vector<int>;
 
@@ -34,8 +39,6 @@ vector<Matching> allPermutations(int numCouples) {
 }
 
 Matching randomChoice(vector<Matching>& options) {
-    std::random_device r;
-    std::default_random_engine e(r());
     std::uniform_int_distribution<size_t> dist(0, options.size() - 1);
     return options.at(dist(e));
 }
@@ -59,9 +62,11 @@ Matching pickGuess(int numCouples, vector<Matching>& candidates) {
     set<int> menMatched;
     priority_queue<pair<double,pair<int,int>>> pq;
 
+    std::uniform_real_distribution<double> dist(0, 0.1);
+
     for (int woman = 0; woman < numCouples; woman++) {
         for (int man = 0; man < numCouples; man++) {
-            double prob = probs[woman][man];
+            double prob = probs[woman][man] + dist(e);
             pq.push({ prob, { woman, man }});
         }
     }
@@ -115,7 +120,14 @@ vector<Matching> doRound(const int numCouples,
     }
     assert(bestR >= 0 && bestC >= 0);
 
+    // try a correct first truth booth
+    if (checked.empty()) {
+        bestR = 0;
+        bestC = correct[bestR];
+    }
+
     checked.insert({ bestR, bestC });
+
 
     // do truth booth
     if (correct[bestR] == bestC) {
@@ -159,6 +171,16 @@ bool simulate(int numCouples) {
     return candidates.size() == 1;
 }
 
+int thrFunc(int numSimulations, int numCouples, int id) {
+    printf("thr %d: got %d work to do\n", id, numSimulations);
+    int good = 0;
+    for (int i = 0; i < numSimulations; i++) {
+        good += simulate(numCouples);
+        printf("thr: %d, %f\n", id, (double) good / (double) (i + 1));
+    }
+    return good;
+}
+
 int main(int argc, char* argv[]) {
     if (argc != 3) {
         printf("usage: ./simulate <num couples> <num simulations>\n");
@@ -168,12 +190,23 @@ int main(int argc, char* argv[]) {
     int numCouples = std::stoi(argv[1]);
     int numSimulations = std::stoi(argv[2]);
 
-    int good = 0;
+    int numThreads = std::thread::hardware_concurrency();
+    int perThread = (numSimulations + numThreads - 1) / numThreads;
 
-    for (int i = 0; i < numSimulations; i++) {
-        good += simulate(numCouples);
-        printf("%f\n", (double)good / (double)(i + 1));
+    vector<std::future<int>> futures;
+    int workRemaining = numSimulations;
+    for (int i = 0; i < numThreads; i++) {
+        int thrWork = std::min(workRemaining, perThread);
+        workRemaining -= thrWork;
+        futures.push_back(std::async(thrFunc, thrWork, numCouples, i));
     }
 
+    int totalGood = 0;
+    for (auto& future : futures) {
+        totalGood += future.get();
+    }
+
+    printf("%f\n", (double) totalGood / (double) numSimulations);
+act
     return 0;
 }
